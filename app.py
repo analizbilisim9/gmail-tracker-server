@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, send_file, jsonify, make_response
 from flask_cors import CORS
 import sqlite3
 import io
@@ -9,7 +9,6 @@ import os
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
 
-# 1x1 transparent GIF (tracking pixel)
 PIXEL = base64.b64decode(
     "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
 )
@@ -35,12 +34,10 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Pixel endpoint - alıcı maili açtığında bu çalışır
 @app.route("/pixel/<email_id>.gif")
 def pixel(email_id):
     conn = get_db()
     now = datetime.datetime.utcnow().isoformat()
-    
     row = conn.execute("SELECT * FROM emails WHERE id = ?", (email_id,)).fetchone()
     if row:
         if not row["opened_at"]:
@@ -56,19 +53,18 @@ def pixel(email_id):
         conn.commit()
     conn.close()
 
-    return send_file(
+    response = make_response(send_file(
         io.BytesIO(PIXEL),
-        mimetype="image/gif",
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
-    )
+        mimetype="image/gif"
+    ))
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
 
-# Mail kaydı oluştur (eklenti gönderirken çağırır)
 @app.route("/track", methods=["POST"])
 def track():
     data = request.json
     conn = get_db()
     now = datetime.datetime.utcnow().isoformat()
-    
     conn.execute(
         "INSERT OR REPLACE INTO emails (id, recipient, subject, sent_at) VALUES (?, ?, ?, ?)",
         (data["id"], data.get("recipient", ""), data.get("subject", ""), now)
@@ -77,16 +73,13 @@ def track():
     conn.close()
     return jsonify({"ok": True})
 
-# Mail durumunu sorgula (eklenti popup'ı çağırır)
 @app.route("/status/<email_id>")
 def status(email_id):
     conn = get_db()
     row = conn.execute("SELECT * FROM emails WHERE id = ?", (email_id,)).fetchone()
     conn.close()
-    
     if not row:
         return jsonify({"found": False})
-    
     return jsonify({
         "found": True,
         "id": row["id"],
@@ -98,7 +91,6 @@ def status(email_id):
         "opened": row["opened_at"] is not None
     })
 
-# Tüm takip edilen mailler
 @app.route("/emails")
 def emails():
     conn = get_db()
